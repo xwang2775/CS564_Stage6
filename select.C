@@ -76,7 +76,135 @@ const Status ScanSelect(const string & result,
 {
     cout << "Doing HeapFileScan Selection using ScanSelect()" << endl;
     
+    Record rec;
+    RID rid;
+    Status status;
     
+    // Create a HeapFileScan for the first relation in the projection list
+    HeapFileScan* hfs = new HeapFileScan(projNames[0].relName, status);
+    if (status != OK)
+    {
+        delete hfs;
+        return status;
+    }
+
+    // Start the scan based on whether a filter is provided
+    if (attrDesc == NULL)
+    {
+        // Unconditional scan - start scan with dummy condition that always matches
+        if ((status = hfs->startScan(0, 0, STRING, NULL, EQ)) != OK)
+        {
+            delete hfs;
+            return status;
+        }
+    }
+    else
+    {
+        // Conditional scan based on the attribute type
+        int intValue;
+        float floatValue;
+        switch(attrDesc->attrType)
+        {
+            case STRING:
+                status = hfs->startScan(attrDesc->attrOffset, attrDesc->attrLen, 
+                                        (Datatype)attrDesc->attrType, filter, (Operator)op);
+                break;
+        
+            case INTEGER:
+                intValue = atoi(filter);
+                status = hfs->startScan(attrDesc->attrOffset, attrDesc->attrLen, 
+                                        (Datatype)attrDesc->attrType, (char *)&intValue, (Operator)op);
+                break;
+        
+            case FLOAT:
+                floatValue = atof(filter);
+                status = hfs->startScan(attrDesc->attrOffset, attrDesc->attrLen, 
+                                        (Datatype)attrDesc->attrType, (char *)&floatValue, (Operator)op);
+                break;
+        }
+        
+        if (status != OK)
+        {
+            delete hfs;
+            return status;
+        }
+    }
+    
+    // Iterate through matching records
+    while ((status = hfs->scanNext(rid)) == OK)
+    {
+        if (status == OK)
+        {
+            // Get the current record
+            status = hfs->getRecord(rec);
+            if (status != OK)
+                break;
+            
+            // Prepare attribute list for insertion
+            attrInfo attrList[projCnt];
+            int intValue = 0;
+            float floatValue;
+            
+            for (int i = 0; i < projCnt; i++)
+            {
+                AttrDesc attrDesc = projNames[i];
+                
+                // Set up attribute info
+                strcpy(attrList[i].relName, attrDesc.relName);
+                strcpy(attrList[i].attrName, attrDesc.attrName);
+                attrList[i].attrType = attrDesc.attrType;
+                attrList[i].attrLen = attrDesc.attrLen;
+                
+                // Allocate memory for attribute value
+                attrList[i].attrValue = (void *)malloc(attrDesc.attrLen);
+                
+                // Copy attribute value based on type
+                switch(attrList[i].attrType)
+                {
+                    case STRING: 
+                        memcpy((char *)attrList[i].attrValue, 
+                               (char *)(rec.data + attrDesc.attrOffset), 
+                               attrDesc.attrLen);
+                        break;
+                        
+                    case INTEGER: 
+                        memcpy(&intValue, 
+                               (int *)(rec.data + attrDesc.attrOffset), 
+                               attrDesc.attrLen);
+                        sprintf((char *)attrList[i].attrValue, "%d", intValue);
+                        break;
+                        
+                    case FLOAT: 
+                        memcpy(&floatValue, 
+                               (float *)(rec.data + attrDesc.attrOffset), 
+                               attrDesc.attrLen);
+                        sprintf((char *)attrList[i].attrValue, "%f", floatValue);
+                        break;
+                }
+            }
+        
+            // Insert the selected record into the result relation
+            status = QU_Insert(result, projCnt, attrList);
+            
+            // Free allocated memory
+            for (int i = 0; i < projCnt; i++)
+            {
+                free(attrList[i].attrValue);
+            }
+            
+            // Check for insertion error
+            if (status != OK)
+            {
+                delete hfs;
+                return status;
+            }
+        }
+    }
+    
+    // Clean up the HeapFileScan
+    delete hfs;
+    
+    return OK;
 
     
 }

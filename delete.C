@@ -29,6 +29,7 @@ const Status QU_Delete(const string & relation,
                       const Datatype type, 
                       const char *attrValue)
 {
+    cout << "Doing QU_Delete" << endl; //print statement for diff
     Status status;
     HeapFileScan* hfs = new HeapFileScan(relation, status);
     if(status != OK)

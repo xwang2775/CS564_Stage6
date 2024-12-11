@@ -1,6 +1,7 @@
 #include "catalog.h"
 #include "query.h"
-
+#include "stdio.h" //includes were under scanselect for some reason
+#include "stdlib.h" 
 
 // forward declaration
 const Status ScanSelect(const string & result, 
@@ -28,8 +29,10 @@ const Status QU_Select(const string & result,
 {
    // Qu_Select sets up things and then calls ScanSelect to do the actual work
     cout << "Doing QU_Select " << endl;
+    //QU takes in attrInfo and ScanSelect takes in attrDesc 
+
 	// Step 1: Prepare projection list
-    AttrDesc projList[projCnt];
+    AttrDesc projList[projCnt]; //attrdesc version of projnames
     for (int i = 0; i < projCnt; ++i) {
         Status status = attrCat->getInfo(projNames[i].relName, projNames[i].attrName, projList[i]);
         if (status != OK) {
@@ -38,7 +41,7 @@ const Status QU_Select(const string & result,
     }
 
     // Step 2: Prepare selection attribute (if applicable)
-    AttrDesc *attrDesc = nullptr;
+    AttrDesc *attrDesc = nullptr; //attrdesc version of attr
     if (attr != nullptr) {
         attrDesc = new AttrDesc();
         Status status = attrCat->getInfo(attr->relName, attr->attrName, *attrDesc);
@@ -64,8 +67,6 @@ const Status QU_Select(const string & result,
 
 
 const Status ScanSelect(const string & result, 
-#include "stdio.h"
-#include "stdlib.h"
 			const int projCnt, 
 			const AttrDesc projNames[],
 			const AttrDesc *attrDesc, 
@@ -74,6 +75,8 @@ const Status ScanSelect(const string & result,
 			const int reclen)
 {
     cout << "Doing HeapFileScan Selection using ScanSelect()" << endl;
+    
+    
 
-
+    
 }

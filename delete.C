@@ -1,78 +1,98 @@
 #include "catalog.h"
 #include "query.h"
 
-
-/*
- * Deletes records from a specified relation.
+/**
+ * FUNCTION: QU_Delete
  *
- * Returns:
- * 	OK on success
- * 	an error code otherwise
- */
-
+ * PURPOSE:  Deletes records from a specified relation.
+ *
+ * PARAMETERS:
+ *    relation    (out)    Relation name from where records are to be deleted
+ *    attrName    (in)     Name of the attribute to match when deleting records
+ *    op          (in)     Operator to be used for matching
+ *    type        (in)     Datatype of the attribute
+ *    attrValue   (in)     Value to be used for matching
+ *  
+ * RETURN VALUES:
+ *    Status  OK              Records successfully deleted from the relation
+ *            BADCATPARM      Relation name is empty
+ *            BADSCANPARM     Error in allocating page: All buffer frames are pinned
+ *            FILEEOF         Reached the end of file while scanning for the record
+ *            BUFFEREXCEEDED  All buffer frames are pinned
+ *            HASHTBLERROR    Hash table error occurred
+ *            PAGENOTPINNED   Pin count is already 0
+ *            HASHNOTFOUND    Page is not in the buffer pool hash table
+ **/
 const Status QU_Delete(const string & relation, 
-		       const string & attrName, 
-		       const Operator op,
-		       const Datatype type, 
-		       const char *attrValue)
+                      const string & attrName, 
+                      const Operator op,
+                      const Datatype type, 
+                      const char *attrValue)
 {
-	Status status;
-	HeapFileScan *hfs;
+    Status status;
+    HeapFileScan* hfs = new HeapFileScan(relation, status);
+    if(status != OK)
+        return status;
 
-	// Create a HeapFileScan instance
-	hdf = new HeapFileScan(relation, status);
-	if(status != OK){
-		delete hfs;
-		return status;
-	}
-
-	// If no attribute specified (attrName is empty), delete all the records
-    if (attrName.empty()) {
-        status = hfs->startScan(0, 0, STRING, NULL, EQ);
-    } else {
-        // Get attribute catalog info to find its offset
-        AttrCatInfoattrInfo;
-        status = attrCat->getInfo(relation, attrName, *attrInfo);
+    AttrDesc attrDesc;
+    RID rid;
+    int intValue;
+    float floatValue;
+    
+    // Get attribute information if attribute name is provided
+    if (!attrName.empty()) {
+        status = attrCat->getInfo(relation, attrName, attrDesc);
         if (status != OK) {
             delete hfs;
             return status;
         }
-
-        // Start filtered scan based on the attribute
-        status = hfs->startScan(attrInfo->attrOffset, 
-                              attrInfo->attrLen,
-                              type,
-                              attrValue,
-                              op);
-        delete attrInfo;
     }
-
-    if (status != OK) {
+    
+    // Handle different data types for scanning
+    int offset = attrDesc.attrOffset;
+    int length = attrDesc.attrLen;
+    
+    switch(type)
+    {
+        case STRING:
+            status = hfs->startScan(offset, length, type, attrValue, op);
+            break;
+        
+        case INTEGER:
+            intValue = atoi(attrValue);
+            status = hfs->startScan(offset, length, type, (char *)&intValue, op);
+            break;
+        
+        case FLOAT:
+            floatValue = atof(attrValue);
+            status = hfs->startScan(offset, length, type, (char *)&floatValue, op);
+            break;
+    }
+        
+    if (status != OK)
+    {
         delete hfs;
         return status;
     }
-
-    // Iterate through matching records and delete them
-    RID rid;
-    while ((status = hfs->scanNext(rid)) == OK) {
-        status = hfs->deleteRecord();
-        if (status != OK) {
+    
+    // Delete matching records
+    while((status = hfs->scanNext(rid)) == OK) 
+    {
+        if ((status = hfs->deleteRecord()) != OK) {
             delete hfs;
             return status;
         }
     }
 
-    // FILEEOF is expected when scan completes
+    // Check if we reached end of file (expected case)
     if (status != FILEEOF) {
         delete hfs;
         return status;
     }
 
-    // Clean up
     status = hfs->endScan();
     delete hfs;
-
-    return status;
+    
+    return OK;
 }
-
 

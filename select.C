@@ -40,27 +40,23 @@ const Status QU_Select(const string & result,
         }
     }
 
-    // Step 2: Prepare selection attribute (if applicable)
-    AttrDesc *attrDesc = nullptr; //attrdesc version of attr
+    // Step 2: Prepare selection attribute (if applicable) and tuple len
+    AttrDesc *attrDesc = nullptr; //attrdesc version of attr 
+    int outputTupleLength = 0; //pass to scan_select
     if (attr != nullptr) {
         attrDesc = new AttrDesc();
         Status status = attrCat->getInfo(attr->relName, attr->attrName, *attrDesc);
+        outputTupleLength = attrDesc->attrLen;
         if (status != OK) {
             delete attrDesc;
             return status; // Return error if selection attribute lookup fails
         }
     }
 
-    // Step 3: Compute length of output tuples
-    int outputTupleLength = 0;
-    for (int i = 0; i < projCnt; ++i) {
-        outputTupleLength += projList[i].attrLen;
-    }
-
-    // Step 4: Call ScanSelect
+    // Step 3: Call ScanSelect
     Status status = ScanSelect(result, projCnt, projList, attrDesc, op, attrValue, outputTupleLength);
 
-    // Step 5: Cleanup and return
+    // Step 4: Cleanup and return
     if (attrDesc != nullptr) delete attrDesc;
     return status;
 }

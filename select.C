@@ -1,7 +1,8 @@
 #include "catalog.h"
 #include "query.h"
-#include "stdio.h" //includes were under scanselect for some reason
-#include "stdlib.h" 
+#include <stdlib.h>
+#include "stdio.h"
+
 
 // forward declaration
 const Status ScanSelect(const string & result, 
@@ -12,205 +13,200 @@ const Status ScanSelect(const string & result,
 			const char *filter,
 			const int reclen);
 
-/*
- * Selects records from the specified relation.
+
+/**
+ * FUNCTION: QU_Select
  *
- * Returns:
- * 	OK on success
- * 	an error code otherwise
- */
+ * PURPOSE:  Selects records from the specified relation.
+ *
+ * PARAMETERS:
+ *		result 		(out)		Relation name where result is to be stored
+ *		projCnt		(in)		Count of projections
+ *		projNames	(in)		Information array of projections
+ *		attr		(in)		Information about the attribute to be matched
+ *		op			(in)		Operator to be used for matching
+ *		attrValue	(in)		Value to be used for matching
+ *	
+ * RETURN VALUES:
+ *		Status  	OK         		Selected records successfully found and returned
+ *                  BADCATPARM      Relation name is empty
+ *                  BADSCANPARM     Error in allocating page: All buffer frames are pinned
+ *                  FILEEOF         Reached the end of file while scanning for the record
+ *                  BUFFEREXCEEDED  All buffer frames are pinned
+ *                  HASHTBLERROR    Hash table error occurred
+ *                  PAGENOTPINNED   Pin count is already 0
+ *                  HASHNOTFOUND    Page is not in the buffer pool hash table
+ **/
 
 const Status QU_Select(const string & result, 
 		       const int projCnt, 
 		       const attrInfo projNames[],
-		       const attrInfo *attr, 
+		       const attrInfo *attr, 			//If null, unconditional scan
 		       const Operator op, 
 		       const char *attrValue)
 {
-   // Qu_Select sets up things and then calls ScanSelect to do the actual work
+   	// Qu_Select sets up things and then calls ScanSelect to do the actual work
     cout << "Doing QU_Select " << endl;
-    //QU takes in attrInfo and ScanSelect takes in attrDesc 
-
-	// Step 1: Prepare projection list
-    AttrDesc projList[projCnt]; //attrdesc version of projnames
-    for (int i = 0; i < projCnt; ++i) {
-        Status status = attrCat->getInfo(projNames[i].relName, projNames[i].attrName, projList[i]);
-        if (status != OK) {
-            return status; // Return error if attribute lookup fails
-        }
-    }
-
-    // Step 2: Prepare selection attribute (if applicable)
-    AttrDesc *attrDesc = nullptr; //attrdesc version of attr
-    if (attr != nullptr) {
-        attrDesc = new AttrDesc();
-        Status status = attrCat->getInfo(attr->relName, attr->attrName, *attrDesc);
-        if (status != OK) {
-            delete attrDesc;
-            return status; // Return error if selection attribute lookup fails
-        }
-    }
-
-    // Step 3: Compute length of output tuples
-    int outputTupleLength = 0;
-    for (int i = 0; i < projCnt; ++i) {
-        outputTupleLength += projList[i].attrLen;
-    }
-
-    // Step 4: Call ScanSelect
-    Status status = ScanSelect(result, projCnt, projList, attrDesc, op, attrValue, outputTupleLength);
-
-    // Step 5: Cleanup and return
-    if (attrDesc != nullptr) delete attrDesc;
-    return status;
+	
+	Status status;
+	AttrDesc projNames_Descs[projCnt];
+	
+	for (int i = 0; i < projCnt; i++)
+	{
+		status = attrCat->getInfo(projNames[i].relName, projNames[i].attrName, projNames_Descs[i]);
+	    if (status != OK)
+			return status;
+	}
+	
+	AttrDesc *attrDescWhere = NULL;
+	int attrValueLen = 0;
+	if(attr != NULL)
+	{
+		attrDescWhere = new AttrDesc;
+		status = attrCat->getInfo(attr->relName, attr->attrName, *attrDescWhere);
+		attrValueLen = attrDescWhere->attrLen;
+		if (status != OK)
+			return status;
+	}
+	
+	return ScanSelect(	result, 
+						projCnt, 
+						projNames_Descs,
+						attrDescWhere, 
+						op,
+						attrValue,
+	  					attrValueLen);
 }
 
 
+/**
+ * FUNCTION: ScanSelect
+ *
+ * PURPOSE:  Selects records from the specified relation.
+ *
+ * PARAMETERS:
+ *		result 			(out)		Relation name where result is to be stored
+ *		projCnt			(in)		Count of projections
+ *		projNames_Descs	(in)		Attribute description array of projections
+ *		filterAttr		(in)		Attribute description of the attribute to be matched
+ *		op				(in)		Operator to be used for matching
+ *		filterValue		(in)		Value to be used for matching
+ *		reclen			(in)		Length of the filter value
+ *	
+ * RETURN VALUES:
+ *		Status  	OK         		Selected records successfully found and returned
+ *                  BADCATPARM      Relation name is empty
+ *                  BADSCANPARM     Error in allocating page: All buffer frames are pinned
+ *                  FILEEOF         Reached the end of file while scanning for the record
+ *                  BUFFEREXCEEDED  All buffer frames are pinned
+ *                  HASHTBLERROR    Hash table error occurred
+ *                  PAGENOTPINNED   Pin count is already 0
+ *                  HASHNOTFOUND    Page is not in the buffer pool hash table
+ **/
 const Status ScanSelect(const string & result, 
 			const int projCnt, 
-			const AttrDesc projNames[],
-			const AttrDesc *attrDesc, 
+			const AttrDesc projNames_Descs[],
+			const AttrDesc *filterAttr, 
 			const Operator op, 
-			const char *filter,
+			const char *filterValue,
 			const int reclen)
 {
-    cout << "Doing HeapFileScan Selection using ScanSelect()" << endl;
-    
-    // Status to track operations
-    Status status;
+	cout << "Doing HeapFileScan Selection using ScanSelect()" << endl;
+	Record rec;
+	RID rid;
+	Status status;
+	
+	HeapFileScan* hfs = new HeapFileScan(projNames_Descs[0].relName, status);
+	if (status != OK)
+	{
+		delete hfs;
+		return status;
+	}
 
-    // Open the result table as an InsertFileScan for output
-    InsertFileScan* resultFile = nullptr;
-    try {
-        resultFile = new InsertFileScan(result, status);
-        if (status != OK) {
-            delete resultFile;
-            return status;
-        }
-    } catch (...) {
-        return BADFILE;
-    }
-
-    // Determine the source relation name from the first projection
-    string sourceRelation(projNames[0].relName);
-
-    // Open the source relation as a HeapFileScan
-    HeapFileScan* scanFile = nullptr;
-    scanFile = new HeapFileScan(sourceRelation, status);
-    if (status != OK) {
-            delete resultFile;
-            delete scanFile;
-            return status;
-        }
-        // If no selection condition, start an unconditional scan
-    if (attrDesc == nullptr) {
-        status = scanFile->startScan(0,0,STRING,NULL,EQ);
-    } else {
-        // Start a scan with the specific filter condition
-        int intVal;
-        float floatVal;
-        switch(attrDesc->attrType)
-        {
-            case STRING:
-                status = scanFile->startScan(attrDesc->attrOffset, attrDesc->attrLen, 
-                                        (Datatype)attrDesc->attrType, filter, op);
-                break;
-        
-            case INTEGER:
-                intVal = atoi(filter);
-                status = scanFile->startScan(attrDesc->attrOffset, attrDesc->attrLen, 
-                                        (Datatype)attrDesc->attrType, (char *)&intVal, op);
-                break;
-        
-            case FLOAT:
-                floatVal = atof(filter);
-                status = scanFile->startScan(attrDesc->attrOffset, attrDesc->attrLen, 
-                                        (Datatype)attrDesc->attrType, (char *)&floatVal, op);
-                break;
-        }
-    }
-
-    if (status != OK) {
-        delete resultFile;
-        delete scanFile;
-        return status;
-    }
-
-    // Allocate memory for the output record
-    char* outputRecord = new char[reclen];
-    memset(outputRecord, 0, reclen);
-
-    // Scan the source relation
-    RID rid;
-    Record record;
-    while (scanFile->scanNext(rid) == OK) {
-        // Get the current record
-        status = scanFile->getRecord(record);
-        if (status != OK) continue;
-
-        // Reset output record offset
-        int offset = 0;
-        // Use this for qu_insert
-        attrInfo attrList[projCnt];
-        int intValue = 0;
-            float floatValue;
-            
-            for (int i = 0; i < projCnt; i++)
-            {
-                AttrDesc attrDesc = projNames[i];
-                
-                // Set up attribute info
-                strcpy(attrList[i].relName, attrDesc.relName);
-                strcpy(attrList[i].attrName, attrDesc.attrName);
-                attrList[i].attrType = attrDesc.attrType;
-                attrList[i].attrLen = attrDesc.attrLen;
-                
-                // Allocate memory for attribute value
-                attrList[i].attrValue = (void *)malloc(attrDesc.attrLen);
-                
-                // Copy attribute value based on type
-                int intVal;
-                float floatVal;
-                switch(attrList[i].attrType)
+	if(filterAttr == NULL)
+	{
+		if ((status = hfs->startScan(0, 0, STRING,  NULL, EQ)) != OK)
+		{
+			delete hfs;
+			return status;
+		}
+	}
+	else
+	{
+		int intValue;
+		float floatValue;
+		switch(filterAttr->attrType)
+		{
+			case STRING:
+				status = hfs->startScan(filterAttr->attrOffset, filterAttr->attrLen, (Datatype) filterAttr->attrType, filterValue, (Operator) op);
+				break;
+		
+			case INTEGER:
+		 		intValue = atoi(filterValue);
+				status = hfs->startScan(filterAttr->attrOffset, filterAttr->attrLen, (Datatype) filterAttr->attrType, (char *)&intValue, (Operator) op);
+				break;
+		
+			case FLOAT:
+				floatValue = atof(filterValue);
+				status = hfs->startScan(filterAttr->attrOffset, filterAttr->attrLen, (Datatype) filterAttr->attrType, (char *)&floatValue, (Operator) op);
+				break;
+		}
+		
+		if(status != OK)
+		{
+			delete hfs;
+			return status;
+		}
+	}
+	
+	while ((status = hfs->scanNext(rid)) == OK)
+	{
+ 		if (status == OK)
+  		{
+  			status = hfs->getRecord(rec);
+			if (status != OK)
+				break;
+          	
+    		attrInfo attrList[projCnt];
+			int value = 0; char buffer[33];
+			float fValue;
+    		for(int i = 0; i < projCnt; i++)
+			{
+				AttrDesc attrDesc = projNames_Descs[i];
+  	  			
+  	  			strcpy(attrList[i].relName, attrDesc.relName);
+  	  			strcpy(attrList[i].attrName, attrDesc.attrName);
+  	  			attrList[i].attrType = attrDesc.attrType;
+  	  			attrList[i].attrLen = attrDesc.attrLen;
+  	  			
+  	  			attrList[i].attrValue = (void *) malloc(attrDesc.attrLen);
+  	  			
+				switch(attrList[i].attrType)
 				{
 					case STRING: 
-						 memcpy((char *)attrList[i].attrValue, (char *)(record.data + attrDesc.attrOffset), attrDesc.attrLen);
+						 memcpy((char *)attrList[i].attrValue, (char *)(rec.data + attrDesc.attrOffset), attrDesc.attrLen);
 						 break;
 						 
 					case INTEGER: 
-						memcpy(&intVal, (int *)(record.data + attrDesc.attrOffset), attrDesc.attrLen);
-						sprintf((char *)attrList[i].attrValue, "%d", intVal);
+						memcpy(&value, (int *)(rec.data + attrDesc.attrOffset), attrDesc.attrLen);
+						sprintf((char *)attrList[i].attrValue, "%d", value);
 						break;
 						 
 					case FLOAT: 
- 						memcpy(&floatVal, (float *)(record.data + attrDesc.attrOffset), attrDesc.attrLen);
- 						sprintf((char *)attrList[i].attrValue, "%f", floatVal);
+ 						memcpy(&fValue, (float *)(rec.data + attrDesc.attrOffset), attrDesc.attrLen);
+ 						sprintf((char *)attrList[i].attrValue, "%f", fValue);
 						break;
 				}
-            }
-        
-            // Insert the selected record into the result relation
-            status = QU_Insert(result, projCnt, attrList);
-            
-            // Free allocated memory
-            for (int i = 0; i < projCnt; i++)
-            {
-                free(attrList[i].attrValue);
-            }
-            
-            // Check for insertion error
-            if (status != OK)
-            {
-                return status;
-            }
-        }
-
-    // Cleanup
-    delete[] outputRecord;
-    delete resultFile;
-    delete scanFile;
-
-    return OK;
-
-    
+  			}
+  		
+  			status = QU_Insert(result, projCnt, attrList);
+  			if(status != OK)
+			{
+				delete hfs;
+				return status;
+			}
+  		}
+	}
+		
+	return OK;
 }

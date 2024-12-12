@@ -80,61 +80,87 @@ const Status ScanSelect(const string & result,
 			const int reclen)
 {
     cout << "Doing HeapFileScan Selection using ScanSelect()" << endl;
+    // Status to track operations
+    Status status;
 
-	Status status;
-	// Open the result relation,
-	// Prepare to insert records
-	InsertFileScan resultRel(result, status);
-	int resultTupCnt = 0;
-	if (status != OK) return status;
+    // Open the result table as an InsertFileScan for output
+    InsertFileScan* resultFile = nullptr;
 
-	char outputData[reclen];
-	Record outputRec;
-	RID outRID;
-	outputRec.data = (void*)outputData;
-	outputRec.length = reclen;
+    resultFile = new InsertFileScan(result, status);
+    if (status != OK) {
+        delete resultFile;
+        return status;
+    }
 
-	HeapFileScan scanner(string(projNames[0].relName), status);
-	if(status != OK) return status;
-	
-	if(attrDesc == NULL) {
-		// Full scan
-		
-		// Initialize scanner
-		// If filter = NULL, then it marks all records as matched.
-		status = scanner.startScan(0,0,STRING,NULL,EQ);
-		if(status != OK) return status;
+    // Determine the source relation name from the first projection
+    string sourceRelation(projNames[0].relName);
 
-	} else {
-		// Initialize Scanner
-		status = scanner.startScan(attrDesc->attrOffset,
-									attrDesc->attrLen,
-									(Datatype) attrDesc->attrType,
-									filter,
-									op);
-	}
+    // Open the source relation as a HeapFileScan
+    HeapFileScan* scanFile = nullptr;
+    scanFile = new HeapFileScan(sourceRelation, status);
+    if (status != OK) {
+        delete resultFile;
+        delete scanFile;
+        return status;
+    }
+    // If no selection condition, start an unconditional scan
+    if (attrDesc == nullptr) {
+        status = scanFile->startScan(0,0,STRING,NULL,EQ);
+    } else {
+        // Start a scan with the specific filter condition
+        status = scanFile->startScan(attrDesc->attrOffset,attrDesc->attrLen,(Datatype)attrDesc->attrType
+        ,filter,op);
+    }
 
-	RID rec;
-	while(scanner.scanNext(rec) == OK) {
-		Record tempRec;
-		status = scanner.getRecord(tempRec);
-		assert(status == OK);
-		
-		// Look through each projection attribute
-		// copy the relevant entry to the corresponding position
-		int outputOffset = 0;
-		for(int i = 0; i < projCnt; ++i) {
-			memcpy((char*)outputRec.data+outputOffset,
-					(char*)tempRec.data+projNames[i].attrOffset,
-					projNames[i].attrLen);
-			outputOffset += projNames[i].attrLen;
-		}
+    if (status != OK) {
+        delete resultFile;
+        delete scanFile;
+        return status;
+    }
 
-		// Insert the record
-		status = resultRel.insertRecord(outputRec, outRID);
-		assert(status == OK);
-		resultTupCnt++;
-	}
+    // Allocate memory for the output record
+    Record outputRecord;
+    outputRecord.length = reclen;
+    char* buff = new char[reclen];
+    memset(buff, 0, reclen);
+    outputRecord.data = buff;
+    RID newRID;
+    // Scan the source relation
+    RID rid;
+    Record record;
+    while (scanFile->scanNext(rid) == OK) {
+        // Get the current record
+        status = scanFile->getRecord(record);
+        if (status != OK) continue;
 
-	return OK;
+        // Reset output record offset
+        int offset = 0;
+
+        // Copy each projected attribute
+        for (int i = 0; i < projCnt; ++i) {
+            // Copy the attribute from source record to output record
+            memcpy(outputRecord.data + offset, 
+                   record.data + projNames[i].attrOffset, 
+                   projNames[i].attrLen);
+            
+            // Move offset
+            offset += projNames[i].attrLen;
+        }
+
+        // Insert the output record into result file
+        status = resultFile->insertRecord(outputRecord, newRID);
+        if (status != OK) {
+            // Handle insertion error
+            delete resultFile;
+            delete scanFile;
+            return status;
+        }
+    }
+
+    // Cleanup
+    delete resultFile;
+    delete scanFile;
+
+    return OK;
+
 }

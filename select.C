@@ -29,37 +29,40 @@ const Status QU_Select(const string & result,
 {
    // Qu_Select sets up things and then calls ScanSelect to do the actual work
     cout << "Doing QU_Select " << endl;
-    	// Qu_Select sets up things and then calls ScanSelect to do the actual work
-    cout << "Doing QU_Select " << endl;
-	
-	Status status;
-	AttrDesc projNames_Descs[projCnt];
-	
-	for (int i = 0; i < projCnt; i++)
-	{
-		status = attrCat->getInfo(projNames[i].relName, projNames[i].attrName, projNames_Descs[i]);
-	    if (status != OK)
-			return status;
-	}
-	
-	AttrDesc *attrDescWhere = NULL;
-	int attrValueLen = 0;
-	if(attr != NULL)
-	{
-		attrDescWhere = new AttrDesc;
-		status = attrCat->getInfo(attr->relName, attr->attrName, *attrDescWhere);
-		attrValueLen = attrDescWhere->attrLen;
-		if (status != OK)
-			return status;
-	}
-	
-	return ScanSelect(	result, 
-						projCnt, 
-						projNames_Descs,
-						attrDescWhere, 
-						op,
-						attrValue,
-	  					attrValueLen);
+    //QU takes in attrInfo and ScanSelect takes in attrDesc 
+
+	// Step 1: Prepare projection list
+    AttrDesc projList[projCnt]; //attrdesc version of projnames
+    for (int i = 0; i < projCnt; ++i) {
+        Status status = attrCat->getInfo(projNames[i].relName, projNames[i].attrName, projList[i]);
+        if (status != OK) {
+            return status; // Return error if attribute lookup fails
+        }
+    }
+
+    // Step 2: Prepare selection attribute (if applicable)
+    AttrDesc *attrDesc = nullptr; //attrdesc version of attr
+    if (attr != nullptr) {
+        attrDesc = new AttrDesc();
+        Status status = attrCat->getInfo(attr->relName, attr->attrName, *attrDesc);
+        if (status != OK) {
+            delete attrDesc;
+            return status; // Return error if selection attribute lookup fails
+        }
+    }
+
+    // Step 3: Compute length of output tuples
+    int outputTupleLength = 0;
+    for (int i = 0; i < projCnt; ++i) {
+        outputTupleLength += projList[i].attrLen;
+    }
+
+    // Step 4: Call ScanSelect
+    Status status = ScanSelect(result, projCnt, projList, attrDesc, op, attrValue, outputTupleLength);
+
+    // Step 5: Cleanup and return
+    if (attrDesc != nullptr) delete attrDesc;
+    return status;
 }
 
 
@@ -175,17 +178,15 @@ const Status ScanSelect(const string & result,
                         break;
                         
                     case INTEGER: 
-                        memcpy(&intValue, 
+                        memcpy((char *)attrList[i].attrValue, 
                                (int *)(record.data + attrDesc.attrOffset), 
                                attrDesc.attrLen);
-                        sprintf((char *)attrList[i].attrValue, "%d", intValue);
                         break;
                         
                     case FLOAT: 
-                        memcpy(&floatValue, 
+                        memcpy((char *)attrList[i].attrValue, 
                                (float *)(record.data + attrDesc.attrOffset), 
                                attrDesc.attrLen);
-                        sprintf((char *)attrList[i].attrValue, "%f", floatValue);
                         break;
                 }
             }

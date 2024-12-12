@@ -1,7 +1,6 @@
 #include "catalog.h"
 #include "query.h"
-#include "stdio.h" //includes were under scanselect for some reason
-#include "stdlib.h" 
+
 
 // forward declaration
 const Status ScanSelect(const string & result, 
@@ -29,43 +28,89 @@ const Status QU_Select(const string & result,
 {
    // Qu_Select sets up things and then calls ScanSelect to do the actual work
     cout << "Doing QU_Select " << endl;
-    //QU takes in attrInfo and ScanSelect takes in attrDesc 
+	// Do something like ordering the projname first?
+	
+	Status status;
+	AttrDesc attrDesc[projCnt];
+	for(int i = 0; i < projCnt; ++i) {
+		status = attrCat->getInfo(projNames[i].relName,
+									projNames[i].attrName,
+									attrDesc[i]);
+		if(status != OK) {
+			return status;
+		}
+	}
 
-	// Step 1: Prepare projection list
-    AttrDesc projList[projCnt]; //attrdesc version of projnames
-    for (int i = 0; i < projCnt; ++i) {
-        Status status = attrCat->getInfo(projNames[i].relName, projNames[i].attrName, projList[i]);
-        if (status != OK) {
-            return status; // Return error if attribute lookup fails
-        }
-    }
+	// Get record length
+	int reclen = 0;
+	for(int i = 0; i < projCnt; ++i) {
+		reclen += attrDesc[i].attrLen;
+	}
 
-    // Step 2: Prepare selection attribute (if applicable)
-    AttrDesc *attrDesc = nullptr; //attrdesc version of attr
-    if (attr != nullptr) {
-        attrDesc = new AttrDesc();
-        Status status = attrCat->getInfo(attr->relName, attr->attrName, *attrDesc);
-        if (status != OK) {
-            delete attrDesc;
-            return status; // Return error if selection attribute lookup fails
-        }
-    }
+	//printf("tuple select produced %d result tuples \n", resultTupCnt);
+    
+	if(attr == NULL) {
+		return ScanSelect(result,
+							projCnt,
+							attrDesc,
+							NULL,
+							op,
+							NULL,
+							reclen);
+	} else {
+		AttrDesc attrDesc1;
+		status = attrCat->getInfo(attr->relName, attr->attrName, attrDesc1);
+		if (status != OK) return status;
 
-    // Step 3: Compute length of output tuples
-    int outputTupleLength = 0;
-    for (int i = 0; i < projCnt; ++i) {
-        outputTupleLength += projList[i].attrLen;
-    }
+		// convert the filter into an appropriate type
+		int len = attrDesc1.attrLen;
+		switch (attrDesc1.attrType)
+		{
+		case INTEGER:
+			{
+			int value = atoi(attrValue);
+			return ScanSelect(result,
+							projCnt,
+							attrDesc,
+							&attrDesc1,
+							op,
+							(char*) &value,
+							reclen);
+			}
+			break;
+		
+		case STRING:
+			return ScanSelect(result,
+							projCnt,
+							attrDesc,
+							&attrDesc1,
+							op,
+							attrValue,
+							reclen);
+			break;
 
-    // Step 4: Call ScanSelect
-    Status status = ScanSelect(result, projCnt, projList, attrDesc, op, attrValue, outputTupleLength);
+		case FLOAT:
+			{
+			float value = atof(attrValue);
+			return ScanSelect(result,
+							projCnt,
+							attrDesc,
+							&attrDesc1,
+							op,
+							(char*) &value,
+							reclen);
+			}
+			break;
 
-    // Step 5: Cleanup and return
-    if (attrDesc != nullptr) delete attrDesc;
-    return status;
+		default:
+			break;
+		}
+	}
 }
 
 
+#include "stdio.h"
+#include "stdlib.h"
 const Status ScanSelect(const string & result, 
 			const int projCnt, 
 			const AttrDesc projNames[],
@@ -75,142 +120,61 @@ const Status ScanSelect(const string & result,
 			const int reclen)
 {
     cout << "Doing HeapFileScan Selection using ScanSelect()" << endl;
-    
-    // Status to track operations
-    Status status;
 
-    // Open the result table as an InsertFileScan for output
-    InsertFileScan* resultFile = nullptr;
-    try {
-        resultFile = new InsertFileScan(result, status);
-        if (status != OK) {
-            delete resultFile;
-            return status;
-        }
-    } catch (...) {
-        return BADFILE;
-    }
+	Status status;
+	// Open the result relation,
+	// Prepare to insert records
+	InsertFileScan resultRel(result, status);
+	int resultTupCnt = 0;
+	if (status != OK) return status;
 
-    // Determine the source relation name from the first projection
-    string sourceRelation(projNames[0].relName);
+	char outputData[reclen];
+	Record outputRec;
+	RID outRID;
+	outputRec.data = (void*)outputData;
+	outputRec.length = reclen;
 
-    // Open the source relation as a HeapFileScan
-    HeapFileScan* scanFile = nullptr;
-    scanFile = new HeapFileScan(sourceRelation, status);
-    if (status != OK) {
-            delete resultFile;
-            delete scanFile;
-            return status;
-        }
-        // If no selection condition, start an unconditional scan
-    if (attrDesc == nullptr) {
-        status = scanFile->startScan(0,0,STRING,NULL,EQ);
-    } else {
-        // Start a scan with the specific filter condition
-        int intVal;
-        float floatVal;
-        switch(attrDesc->attrType)
-        {
-            case STRING:
-                status = scanFile->startScan(attrDesc->attrOffset, attrDesc->attrLen, 
-                                        (Datatype)attrDesc->attrType, filter, op);
-                break;
-        
-            case INTEGER:
-                intVal = atoi(filter);
-                status = scanFile->startScan(attrDesc->attrOffset, attrDesc->attrLen, 
-                                        (Datatype)attrDesc->attrType, (char *)&intVal, op);
-                break;
-        
-            case FLOAT:
-                floatVal = atof(filter);
-                status = scanFile->startScan(attrDesc->attrOffset, attrDesc->attrLen, 
-                                        (Datatype)attrDesc->attrType, (char *)&floatVal, op);
-                break;
-        }
-    }
+	HeapFileScan scanner(string(projNames[0].relName), status);
+	if(status != OK) return status;
+	
+	if(attrDesc == NULL) {
+		// Full scan
+		
+		// Initialize scanner
+		// If filter = NULL, then it marks all records as matched.
+		status = scanner.startScan(0,0,STRING,NULL,EQ);
+		if(status != OK) return status;
 
-    if (status != OK) {
-        delete resultFile;
-        delete scanFile;
-        return status;
-    }
+	} else {
+		// Initialize Scanner
+		status = scanner.startScan(attrDesc->attrOffset,
+									attrDesc->attrLen,
+									(Datatype) attrDesc->attrType,
+									filter,
+									op);
+	}
 
-    // Allocate memory for the output record
-    char* outputRecord = new char[reclen];
-    memset(outputRecord, 0, reclen);
+	RID rec;
+	while(scanner.scanNext(rec) == OK) {
+		Record tempRec;
+		status = scanner.getRecord(tempRec);
+		assert(status == OK);
+		
+		// Look through each projection attribute
+		// copy the relevant entry to the corresponding position
+		int outputOffset = 0;
+		for(int i = 0; i < projCnt; ++i) {
+			memcpy((char*)outputRec.data+outputOffset,
+					(char*)tempRec.data+projNames[i].attrOffset,
+					projNames[i].attrLen);
+			outputOffset += projNames[i].attrLen;
+		}
 
-    // Scan the source relation
-    RID rid;
-    Record record;
-    while (scanFile->scanNext(rid) == OK) {
-        // Get the current record
-        status = scanFile->getRecord(record);
-        if (status != OK) continue;
+		// Insert the record
+		status = resultRel.insertRecord(outputRec, outRID);
+		assert(status == OK);
+		resultTupCnt++;
+	}
 
-        // Reset output record offset
-        int offset = 0;
-        // Use this for qu_insert
-        attrInfo attrList[projCnt];
-        int intValue = 0;
-            float floatValue;
-            
-            for (int i = 0; i < projCnt; i++)
-            {
-                AttrDesc attrDesc = projNames[i];
-                
-                // Set up attribute info
-                strcpy(attrList[i].relName, attrDesc.relName);
-                strcpy(attrList[i].attrName, attrDesc.attrName);
-                attrList[i].attrType = attrDesc.attrType;
-                attrList[i].attrLen = attrDesc.attrLen;
-                
-                // Allocate memory for attribute value
-                attrList[i].attrValue = (void *)malloc(attrDesc.attrLen);
-                
-                // Copy attribute value based on type
-                int intVal;
-                float floatVal;
-                switch(attrList[i].attrType)
-				{
-					case STRING: 
-						 memcpy((char *)attrList[i].attrValue, (char *)(record.data + attrDesc.attrOffset), attrDesc.attrLen);
-						 break;
-						 
-					case INTEGER: 
-						memcpy(&intVal, (int *)(record.data + attrDesc.attrOffset), attrDesc.attrLen);
-						sprintf((char *)attrList[i].attrValue, "%d", intVal);
-						break;
-						 
-					case FLOAT: 
- 						memcpy(&floatVal, (float *)(record.data + attrDesc.attrOffset), attrDesc.attrLen);
- 						sprintf((char *)attrList[i].attrValue, "%f", floatVal);
-						break;
-				}
-            }
-        
-            // Insert the selected record into the result relation
-            status = QU_Insert(result, projCnt, attrList);
-            
-            // Free allocated memory
-            for (int i = 0; i < projCnt; i++)
-            {
-                free(attrList[i].attrValue);
-            }
-            
-            // Check for insertion error
-            if (status != OK)
-            {
-                return status;
-            }
-        }
-
-    // Cleanup
-    delete[] outputRecord;
-    delete resultFile;
-    delete scanFile;
-
-    return OK;
-
-    
+	return OK;
 }

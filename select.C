@@ -76,134 +76,109 @@ const Status ScanSelect(const string & result,
 {
     cout << "Doing HeapFileScan Selection using ScanSelect()" << endl;
     
-    Record rec;
-    RID rid;
+    // Status to track operations
     Status status;
-    
-    // Create a HeapFileScan for the first relation in the projection list
-    HeapFileScan* hfs = new HeapFileScan(projNames[0].relName, status);
-    if (status != OK)
-    {
-        delete hfs;
-        return status;
-    }
 
-    // Start the scan based on whether a filter is provided
-    if (attrDesc == NULL)
-    {
-        // Unconditional scan - start scan with dummy condition that always matches
-        if ((status = hfs->startScan(0, 0, STRING, NULL, EQ)) != OK)
-        {
-            delete hfs;
+    // Open the result table as an InsertFileScan for output
+    InsertFileScan* resultFile = nullptr;
+    try {
+        resultFile = new InsertFileScan(result, status);
+        if (status != OK) {
+            delete resultFile;
             return status;
         }
+    } catch (...) {
+        return BADFILE;
     }
-    else
-    {
-        // Conditional scan based on the attribute type
+
+    // Determine the source relation name from the first projection
+    string sourceRelation(projNames[0].relName);
+
+    // Open the source relation as a HeapFileScan
+    HeapFileScan* scanFile = nullptr;
+    scanFile = new HeapFileScan(sourceRelation, status);
+    if (status != OK) {
+            delete resultFile;
+            delete scanFile;
+            return status;
+        }
+        // If no selection condition, start an unconditional scan
+    if (attrDesc == nullptr) {
+        status = scanFile->startScan(0,0,STRING,NULL,EQ);
+    } else {
+        // Start a scan with the specific filter condition
         int intValue;
         float floatValue;
         switch(attrDesc->attrType)
         {
             case STRING:
-                status = hfs->startScan(attrDesc->attrOffset, attrDesc->attrLen, 
-                                        (Datatype)attrDesc->attrType, filter, (Operator)op);
+                status = scanFile->startScan(attrDesc->attrOffset, attrDesc->attrLen, 
+                                        (Datatype)attrDesc->attrType, filter, op);
                 break;
         
             case INTEGER:
                 intValue = atoi(filter);
-                status = hfs->startScan(attrDesc->attrOffset, attrDesc->attrLen, 
-                                        (Datatype)attrDesc->attrType, (char *)&intValue, (Operator)op);
+                status = scanFile->startScan(attrDesc->attrOffset, attrDesc->attrLen, 
+                                        (Datatype)attrDesc->attrType, (char *)&intValue, op);
                 break;
         
             case FLOAT:
                 floatValue = atof(filter);
-                status = hfs->startScan(attrDesc->attrOffset, attrDesc->attrLen, 
-                                        (Datatype)attrDesc->attrType, (char *)&floatValue, (Operator)op);
+                status = scanFile->startScan(attrDesc->attrOffset, attrDesc->attrLen, 
+                                        (Datatype)attrDesc->attrType, (char *)&floatValue, op);
                 break;
         }
-        
-        if (status != OK)
-        {
-            delete hfs;
+    }
+
+    if (status != OK) {
+        delete resultFile;
+        delete scanFile;
+        return status;
+    }
+
+    // Allocate memory for the output record
+    char* outputRecord = new char[reclen];
+    memset(outputRecord, 0, reclen);
+
+    // Scan the source relation
+    RID rid;
+    Record record;
+    while (scanFile->scanNext(rid) == OK) {
+        // Get the current record
+        status = scanFile->getRecord(record);
+        if (status != OK) continue;
+
+        // Reset output record offset
+        int offset = 0;
+
+        // Copy each projected attribute
+        for (int i = 0; i < projCnt; ++i) {
+            // Copy the attribute from source record to output record
+            memcpy(outputRecord + offset, 
+                   record.data + projNames[i].attrOffset, 
+                   projNames[i].attrLen);
+            
+            // Move offset
+            offset += projNames[i].attrLen;
+        }
+
+        // Insert the output record into result file
+        RID newRid;
+        status = resultFile->insertRecord(record, newRid);
+        if (status != OK) {
+            // Handle insertion error
+            delete[] outputRecord;
+            delete resultFile;
+            delete scanFile;
             return status;
         }
     }
-    
-    // Iterate through matching records
-    while ((status = hfs->scanNext(rid)) == OK)
-    {
-        if (status == OK)
-        {
-            // Get the current record
-            status = hfs->getRecord(rec);
-            if (status != OK)
-                break;
-            
-            // Prepare attribute list for insertion
-            attrInfo attrList[projCnt];
-            int intValue = 0;
-            float floatValue;
-            
-            for (int i = 0; i < projCnt; i++)
-            {
-                AttrDesc attrDesc = projNames[i];
-                
-                // Set up attribute info
-                strcpy(attrList[i].relName, attrDesc.relName);
-                strcpy(attrList[i].attrName, attrDesc.attrName);
-                attrList[i].attrType = attrDesc.attrType;
-                attrList[i].attrLen = attrDesc.attrLen;
-                
-                // Allocate memory for attribute value
-                attrList[i].attrValue = (void *)malloc(attrDesc.attrLen);
-                
-                // Copy attribute value based on type
-                switch(attrList[i].attrType)
-                {
-                    case STRING: 
-                        memcpy((char *)attrList[i].attrValue, 
-                               (char *)(rec.data + attrDesc.attrOffset), 
-                               attrDesc.attrLen);
-                        break;
-                        
-                    case INTEGER: 
-                        memcpy(&intValue, 
-                               (int *)(rec.data + attrDesc.attrOffset), 
-                               attrDesc.attrLen);
-                        sprintf((char *)attrList[i].attrValue, "%d", intValue);
-                        break;
-                        
-                    case FLOAT: 
-                        memcpy(&floatValue, 
-                               (float *)(rec.data + attrDesc.attrOffset), 
-                               attrDesc.attrLen);
-                        sprintf((char *)attrList[i].attrValue, "%f", floatValue);
-                        break;
-                }
-            }
-        
-            // Insert the selected record into the result relation
-            status = QU_Insert(result, projCnt, attrList);
-            
-            // // Free allocated memory
-            // for (int i = 0; i < projCnt; i++)
-            // {
-            //     free(attrList[i].attrValue);
-            // }
-            
-            // Check for insertion error
-            if (status != OK)
-            {
-                delete hfs;
-                return status;
-            }
-        }
-    }
-    
-    // Clean up the HeapFileScan
-    delete hfs;
-    
+
+    // Cleanup
+    delete[] outputRecord;
+    delete resultFile;
+    delete scanFile;
+
     return OK;
 
     

@@ -28,83 +28,43 @@ const Status QU_Select(const string & result,
 {
    // Qu_Select sets up things and then calls ScanSelect to do the actual work
     cout << "Doing QU_Select " << endl;
-	// Do something like ordering the projname first?
-	
+	//QU takes in attrInfo and ScanSelect takes in attrDesc 
 	Status status;
-	AttrDesc attrDesc[projCnt];
-	for(int i = 0; i < projCnt; ++i) {
-		status = attrCat->getInfo(projNames[i].relName,
-									projNames[i].attrName,
-									attrDesc[i]);
-		if(status != OK) {
-			return status;
+	// Step 1: Prepare projection list
+    AttrDesc projList[projCnt]; //attrdesc version of projnames
+    for (int i = 0; i < projCnt; ++i) {
+        Status status = attrCat->getInfo(projNames[i].relName, projNames[i].attrName, projList[i]);
+        if (status != OK) {
+            return status; // Return error if attribute lookup fails
+        }
+    }
+
+	// Step 2: Compute length of output tuples
+    int outputTupleLength = 0;
+    for (int i = 0; i < projCnt; ++i) {
+        outputTupleLength += projList[i].attrLen;
+    }
+
+    // Step 3: Prepare selection attribute (if applicable) and pass into scan select
+    AttrDesc *attrDesc = nullptr; //attrdesc version of attr
+    if (attr != nullptr) {
+        attrDesc = new AttrDesc();
+        Status status = attrCat->getInfo(attr->relName, attr->attrName, *attrDesc);
+        if (status != OK) {
+            delete attrDesc;
+            return status; // Return error if selection attribute lookup fails
+        }
+		if (attrDesc->attrType == INTEGER){
+			int intVal = atoi(attrValue);
+			return ScanSelect(result, projCnt, projList, attrDesc, op, (char*) &intVal, outputTupleLength);
+		}else if (attrDesc->attrType == FLOAT){
+			float floatVal = atof(attrValue);
+			return ScanSelect(result, projCnt, projList, attrDesc, op, (char*) &floatVal, outputTupleLength);
+		}else if (attrDesc->attrType == STRING){ //keep same for str
+			return ScanSelect(result, projCnt, projList, attrDesc, op, attrValue, outputTupleLength);
 		}
-	}
-
-	// Get record length
-	int reclen = 0;
-	for(int i = 0; i < projCnt; ++i) {
-		reclen += attrDesc[i].attrLen;
-	}
-
-	//printf("tuple select produced %d result tuples \n", resultTupCnt);
-    
-	if(attr == NULL) {
-		return ScanSelect(result,
-							projCnt,
-							attrDesc,
-							NULL,
-							op,
-							NULL,
-							reclen);
-	} else {
-		AttrDesc attrDesc1;
-		status = attrCat->getInfo(attr->relName, attr->attrName, attrDesc1);
-		if (status != OK) return status;
-
-		// convert the filter into an appropriate type
-		int len = attrDesc1.attrLen;
-		switch (attrDesc1.attrType)
-		{
-		case INTEGER:
-			{
-			int value = atoi(attrValue);
-			return ScanSelect(result,
-							projCnt,
-							attrDesc,
-							&attrDesc1,
-							op,
-							(char*) &value,
-							reclen);
-			}
-			break;
-		
-		case STRING:
-			return ScanSelect(result,
-							projCnt,
-							attrDesc,
-							&attrDesc1,
-							op,
-							attrValue,
-							reclen);
-			break;
-
-		case FLOAT:
-			{
-			float value = atof(attrValue);
-			return ScanSelect(result,
-							projCnt,
-							attrDesc,
-							&attrDesc1,
-							op,
-							(char*) &value,
-							reclen);
-			}
-			break;
-
-		default:
-			break;
-		}
+    }else{
+		return ScanSelect(result, projCnt, projList, NULL, op, NULL, outputTupleLength); //null out for unconditional scan
 	}
 }
 

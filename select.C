@@ -107,8 +107,8 @@ const Status ScanSelect(const string & result,
         status = scanFile->startScan(0,0,STRING,NULL,EQ);
     } else {
         // Start a scan with the specific filter condition
-        int intValue;
-        float floatValue;
+        int intVal;
+        float floatVal;
         switch(attrDesc->attrType)
         {
             case STRING:
@@ -117,15 +117,15 @@ const Status ScanSelect(const string & result,
                 break;
         
             case INTEGER:
-                intValue = atoi(filter);
+                intVal = atoi(filter);
                 status = scanFile->startScan(attrDesc->attrOffset, attrDesc->attrLen, 
-                                        (Datatype)attrDesc->attrType, (char *)&intValue, op);
+                                        (Datatype)attrDesc->attrType, (char *)&intVal, op);
                 break;
         
             case FLOAT:
-                floatValue = atof(filter);
+                floatVal = atof(filter);
                 status = scanFile->startScan(attrDesc->attrOffset, attrDesc->attrLen, 
-                                        (Datatype)attrDesc->attrType, (char *)&floatValue, op);
+                                        (Datatype)attrDesc->attrType, (char *)&floatVal, op);
                 break;
         }
     }
@@ -150,29 +150,64 @@ const Status ScanSelect(const string & result,
 
         // Reset output record offset
         int offset = 0;
-
-        // Copy each projected attribute
-        for (int i = 0; i < projCnt; ++i) {
-            // Copy the attribute from source record to output record
-            memcpy(outputRecord + offset, 
-                   record.data + projNames[i].attrOffset, 
-                   projNames[i].attrLen);
+        // Use this for qu_insert
+        attrInfo attrList[projCnt];
+        int intValue = 0;
+            float floatValue;
             
-            // Move offset
-            offset += projNames[i].attrLen;
+            for (int i = 0; i < projCnt; i++)
+            {
+                AttrDesc attrDesc = projNames[i];
+                
+                // Set up attribute info
+                strcpy(attrList[i].relName, attrDesc.relName);
+                strcpy(attrList[i].attrName, attrDesc.attrName);
+                attrList[i].attrType = attrDesc.attrType;
+                attrList[i].attrLen = attrDesc.attrLen;
+                
+                // Allocate memory for attribute value
+                attrList[i].attrValue = (void *)malloc(attrDesc.attrLen);
+                
+                // Copy attribute value based on type
+                switch(attrList[i].attrType)
+                {
+                    case STRING: 
+                        memcpy((char *)attrList[i].attrValue, 
+                               (char *)(record.data + attrDesc.attrOffset), 
+                               attrDesc.attrLen);
+                        break;
+                        
+                    case INTEGER: 
+                        memcpy(&intValue, 
+                               (int *)(record.data + attrDesc.attrOffset), 
+                               attrDesc.attrLen);
+                        sprintf((char *)attrList[i].attrValue, "%d", intValue);
+                        break;
+                        
+                    case FLOAT: 
+                        memcpy(&floatValue, 
+                               (float *)(record.data + attrDesc.attrOffset), 
+                               attrDesc.attrLen);
+                        sprintf((char *)attrList[i].attrValue, "%f", floatValue);
+                        break;
+                }
+            }
+        
+            // Insert the selected record into the result relation
+            status = QU_Insert(result, projCnt, attrList);
+            
+            // Free allocated memory
+            for (int i = 0; i < projCnt; i++)
+            {
+                free(attrList[i].attrValue);
+            }
+            
+            // Check for insertion error
+            if (status != OK)
+            {
+                return status;
+            }
         }
-
-        // Insert the output record into result file
-        RID newRid;
-        status = resultFile->insertRecord(record, newRid);
-        if (status != OK) {
-            // Handle insertion error
-            delete[] outputRecord;
-            delete resultFile;
-            delete scanFile;
-            return status;
-        }
-    }
 
     // Cleanup
     delete[] outputRecord;

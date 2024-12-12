@@ -186,11 +186,11 @@ const Status ScanSelect(const string & result,
             // Insert the selected record into the result relation
             status = QU_Insert(result, projCnt, attrList);
             
-            // Free allocated memory
-            for (int i = 0; i < projCnt; i++)
-            {
-                free(attrList[i].attrValue);
-            }
+            // // Free allocated memory
+            // for (int i = 0; i < projCnt; i++)
+            // {
+            //     free(attrList[i].attrValue);
+            // }
             
             // Check for insertion error
             if (status != OK)

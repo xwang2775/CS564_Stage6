@@ -40,23 +40,27 @@ const Status QU_Select(const string & result,
         }
     }
 
-    // Step 2: Prepare selection attribute (if applicable) and tuple len
-    AttrDesc *attrDesc = nullptr; //attrdesc version of attr 
-    int outputTupleLength = 0; //pass to scan_select
+    // Step 2: Prepare selection attribute (if applicable)
+    AttrDesc *attrDesc = nullptr; //attrdesc version of attr
     if (attr != nullptr) {
         attrDesc = new AttrDesc();
         Status status = attrCat->getInfo(attr->relName, attr->attrName, *attrDesc);
-        outputTupleLength = attrDesc->attrLen;
         if (status != OK) {
             delete attrDesc;
             return status; // Return error if selection attribute lookup fails
         }
     }
 
-    // Step 3: Call ScanSelect
+    // Step 3: Compute length of output tuples
+    int outputTupleLength = 0;
+    for (int i = 0; i < projCnt; ++i) {
+        outputTupleLength += projList[i].attrLen;
+    }
+
+    // Step 4: Call ScanSelect
     Status status = ScanSelect(result, projCnt, projList, attrDesc, op, attrValue, outputTupleLength);
 
-    // Step 4: Cleanup and return
+    // Step 5: Cleanup and return
     if (attrDesc != nullptr) delete attrDesc;
     return status;
 }
@@ -165,26 +169,24 @@ const Status ScanSelect(const string & result,
                 attrList[i].attrValue = (void *)malloc(attrDesc.attrLen);
                 
                 // Copy attribute value based on type
+                int intVal;
+                float floatVal;
                 switch(attrList[i].attrType)
-                {
-                    case STRING: 
-                        memcpy((char *)attrList[i].attrValue, 
-                               (char *)(record.data + attrDesc.attrOffset), 
-                               attrDesc.attrLen);
-                        break;
-                        
-                    case INTEGER: 
-                        memcpy((char *)attrList[i].attrValue, 
-                               (int *)(record.data + attrDesc.attrOffset), 
-                               attrDesc.attrLen);
-                        break;
-                        
-                    case FLOAT: 
-                        memcpy((char *)attrList[i].attrValue, 
-                               (float *)(record.data + attrDesc.attrOffset), 
-                               attrDesc.attrLen);
-                        break;
-                }
+				{
+					case STRING: 
+						 memcpy((char *)attrList[i].attrValue, (char *)(record.data + attrDesc.attrOffset), attrDesc.attrLen);
+						 break;
+						 
+					case INTEGER: 
+						memcpy(&intVal, (int *)(record.data + attrDesc.attrOffset), attrDesc.attrLen);
+						sprintf((char *)attrList[i].attrValue, "%d", intVal);
+						break;
+						 
+					case FLOAT: 
+ 						memcpy(&floatVal, (float *)(record.data + attrDesc.attrOffset), attrDesc.attrLen);
+ 						sprintf((char *)attrList[i].attrValue, "%f", floatVal);
+						break;
+				}
             }
         
             // Insert the selected record into the result relation

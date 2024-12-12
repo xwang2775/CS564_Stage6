@@ -1,28 +1,15 @@
 #include "catalog.h"
 #include "query.h"
 
-/**
- * FUNCTION: QU_Delete
+
+/*
+ * Deletes records from a specified relation.
  *
- * PURPOSE:  Deletes records from a specified relation.
- *
- * PARAMETERS:
- *    relation    (out)    Relation name from where records are to be deleted
- *    attrName    (in)     Name of the attribute to match when deleting records
- *    op          (in)     Operator to be used for matching
- *    type        (in)     Datatype of the attribute
- *    attrValue   (in)     Value to be used for matching
- *  
- * RETURN VALUES:
- *    Status  OK              Records successfully deleted from the relation
- *            BADCATPARM      Relation name is empty
- *            BADSCANPARM     Error in allocating page: All buffer frames are pinned
- *            FILEEOF         Reached the end of file while scanning for the record
- *            BUFFEREXCEEDED  All buffer frames are pinned
- *            HASHTBLERROR    Hash table error occurred
- *            PAGENOTPINNED   Pin count is already 0
- *            HASHNOTFOUND    Page is not in the buffer pool hash table
- **/
+ * Returns:
+ * 	OK on success
+ * 	an error code otherwise
+ */
+
 const Status QU_Delete(const string & relation, 
                       const string & attrName, 
                       const Operator op,

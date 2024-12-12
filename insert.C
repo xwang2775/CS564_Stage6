@@ -14,7 +14,7 @@ const Status QU_Insert(const string & relation,
 	const int attrCnt, 
 	const attrInfo attrList[])
 {
-	//cout << "Doing QU_Insert" << endl; //print statement for diff
+	cout << "Doing QU_Insert " << endl; //print statement for diff
 	Status status;
   	AttrDesc *attrs;
   	int actualAttrCnt;
